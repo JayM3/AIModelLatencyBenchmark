@@ -1,18 +1,12 @@
 import type { BenchmarkRequest, EndpointProtocol, RunResult, TokenEvent } from "./types";
 
-export type RunUpdate = { type: "run"; result: RunResult };
-export type ProgressUpdate = { type: "progress"; completed: number; total: number };
-export type DoneUpdate = { type: "done"; aggregate: ReturnType<typeof import("./metrics").aggregateRuns>; completedAt: string };
-export type ErrorUpdate = { type: "error"; error: string };
-export type BenchmarkUpdate = RunUpdate | ProgressUpdate | DoneUpdate | ErrorUpdate;
-
-function endpointUrl(rawEndpoint: string, protocol: EndpointProtocol) {
-  const raw = rawEndpoint.trim().replace(/\/$/, "");
+export function endpointUrl(rawEndpoint: string, protocol: EndpointProtocol) {
+  const raw = rawEndpoint.trim().replace(/\/+$/, "");
   if (protocol === "custom" || raw.endsWith("/responses") || raw.endsWith("/chat/completions")) return raw;
   return `${raw}/${protocol === "responses" ? "responses" : "chat/completions"}`;
 }
 
-function approximateTokens(text: string) {
+export function approximateTokens(text: string) {
   if (!text.trim()) return 0;
   // A rough BPE proxy for unknown/custom models; provider usage remains authoritative.
   return Math.max(1, Math.ceil(text.trim().length / 4));
@@ -28,7 +22,13 @@ function deltaText(value: any, protocol: EndpointProtocol) {
 }
 
 function usageCount(value: any) {
-  return Number(value?.usage?.completion_tokens ?? value?.response?.usage?.output_tokens ?? value?.response?.usage?.completion_tokens ?? 0);
+  return Number(
+    value?.usage?.completion_tokens ??
+      value?.usage?.output_tokens ??
+      value?.response?.usage?.output_tokens ??
+      value?.response?.usage?.completion_tokens ??
+      0,
+  );
 }
 
 function responseOutput(value: any, protocol: EndpointProtocol) {

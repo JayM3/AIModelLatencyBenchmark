@@ -66,3 +66,25 @@ export type BenchmarkResponse = {
   protocol: EndpointProtocol;
   completedAt: string;
 };
+
+export type SavedBenchmark = {
+  id: string;
+  name?: string;
+  notes?: string;
+  savedAt: string;
+  model: string;
+  endpoint: string;
+  protocol: EndpointProtocol;
+  promptPreset?: PromptPreset;
+  prompt: string;
+  config: {
+    runs: number;
+    concurrency: number;
+    maxTokens: number;
+    temperature: number;
+    stream: boolean;
+    coldStart: boolean;
+  };
+  aggregate: AggregatedMetrics;
+  results: RunResult[];
+};

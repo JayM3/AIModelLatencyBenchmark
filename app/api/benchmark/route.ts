@@ -1,7 +1,6 @@
-import { NextRequest } from "next/server";
-import { aggregateRuns } from "@/src/lib/metrics";
-import { executeRun, parseHeaders } from "@/src/lib/benchmark-runner";
-import type { BenchmarkRequest, EndpointProtocol, RunResult } from "@/src/lib/types";
+import type { NextRequest } from "next/server";
+import { runBenchmark, type BenchmarkEvent } from "@/src/lib/benchmark";
+import { isJsonRequest, normalizeBenchmarkRequest, type ValidatedBenchmarkRequest } from "@/src/lib/request-validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,52 +9,58 @@ function sseEvent(data: unknown) {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
+/**
+ * HTTP/SSE adapter around the benchmark engine.
+ *
+ * All batching, clamping, and metric aggregation live in `runBenchmark`, so this
+ * route only translates a request body into engine options and engine events into
+ * the SSE frames the browser client already understands
+ * (`meta` / `run` / `progress` / `done` / `error`).
+ */
 export async function POST(request: NextRequest) {
-  let body: BenchmarkRequest;
-  try { body = await request.json(); } catch { return Response.json({ error: "Request body must be valid JSON" }, { status: 400 }); }
-
-  const endpoint = body.endpoint?.trim(); const model = body.model?.trim();
-  if (!endpoint || !model) return Response.json({ error: "Endpoint and model are required" }, { status: 400 });
-  let headers: Record<string, string>;
-  try { headers = parseHeaders(body.headers ? JSON.stringify(body.headers) : ""); } catch { return Response.json({ error: "Custom headers must be a string-to-string object" }, { status: 400 }); }
-
-  const runs = Math.min(Math.max(Number(body.runs) || 1, 1), 20);
-  const concurrency = Math.min(Math.max(Number(body.concurrency) || 1, 1), 5);
-  const protocol: EndpointProtocol = body.protocol ?? (endpoint.endsWith("/responses") ? "responses" : "chat");
-  const prompt = body.prompt?.trim() || "Say hello in one sentence.";
-  const results: RunResult[] = [];
+  if (!isJsonRequest(request)) return Response.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  let body: ValidatedBenchmarkRequest;
+  try {
+    body = normalizeBenchmarkRequest(await request.json());
+  } catch (error) {
+    return Response.json({ error: error instanceof SyntaxError ? "Request body must be valid JSON" : error instanceof Error ? error.message : "Invalid benchmark request" }, { status: 400 });
+  }
+  const { endpoint, model, prompt, protocol, headers } = body;
   const controller = new AbortController();
-  if (request.signal.aborted) controller.abort();
-  else request.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  const signal = AbortSignal.any([request.signal, controller.signal]);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(streamController) {
       let closed = false;
       const send = (event: unknown) => {
-        if (controller.signal.aborted || closed) return;
-        try { streamController.enqueue(encoder.encode(sseEvent(event))); } catch { closed = true; }
+        if (signal.aborted || closed) return;
+        try { streamController.enqueue(encoder.encode(sseEvent(event))); } catch { closed = true; controller.abort(); }
+      };
+      const onEvent = (event: BenchmarkEvent) => {
+        if (event.type === "meta") {
+          send({ type: "meta", total: event.total, model: event.model, endpoint: event.endpoint, protocol: event.protocol });
+          return;
+        }
+        if (event.type === "run") {
+          send({ type: "run", result: event.result });
+          send({ type: "progress", completed: event.completed, total: event.total });
+          return;
+        }
+        send({
+          type: "done",
+          aggregate: event.response.aggregate,
+          results: event.response.results,
+          completedAt: event.response.completedAt,
+        });
       };
       try {
-        send({ type: "meta", total: runs, model, endpoint, protocol });
-        for (let offset = 0; offset < runs; offset += concurrency) {
-          if (controller.signal.aborted) throw new Error("Benchmark cancelled");
-          const batch = Array.from({ length: Math.min(concurrency, runs - offset) }, (_, index) => executeRun({
-            ...body,
-            endpoint, model, prompt, protocol, headers,
-            maxTokens: Math.min(Math.max(Number(body.maxTokens) || 128, 1), 4096),
-            temperature: Math.min(Math.max(Number(body.temperature) || 0, 0), 2),
-            run: offset + index + 1,
-            signal: controller.signal,
-          }).then((result) => {
-            results.push(result);
-            send({ type: "run", result });
-            send({ type: "progress", completed: results.length, total: runs });
-            return result;
-          }));
-          await Promise.all(batch);
-        }
-        send({ type: "done", aggregate: aggregateRuns(results), results, completedAt: new Date().toISOString() });
+        await runBenchmark({
+          ...body,
+          endpoint, model, prompt, protocol, headers,
+          signal,
+          onEvent,
+        });
       } catch (error) {
         send({ type: "error", error: error instanceof Error ? error.message : "Benchmark failed" });
       } finally {

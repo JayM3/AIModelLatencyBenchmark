@@ -1,6 +1,30 @@
+# Dependencies and build output
 node_modules/
 .next/
+out/
 dist/
+build/
+coverage/
 *.tsbuildinfo
+
+# Local configuration and credentials
 .env
-.env.local
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Private benchmark history, scratch files, and logs
+/data/
+/.tmp/
+*.log
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

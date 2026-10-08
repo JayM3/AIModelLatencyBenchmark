@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible problem with Model Bench.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include API keys, authorization headers, private endpoint URLs, or sensitive prompts/output. For security vulnerabilities, follow SECURITY.md instead of opening a public issue.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the protocol and relevant settings. Use dummy data and a public or local test endpoint.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, browser, Node.js version, and project version or commit.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized errors or screenshots
+      description: Remove credentials and private benchmark content before sharing.
